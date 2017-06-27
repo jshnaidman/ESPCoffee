@@ -1,27 +1,26 @@
-// ESP8266 as Webserver turning LED on/off and reading TMP36 temperature sensor
-// This code is based on Mike bitar's temperature reader
+// ESP8266 as Webserver turning LED on/off or turning a coffee machine on/off
 
 
 #include <ESP8266WiFi.h>
 
-// WiFi Definitions 
-const char WiFiSSID[] = "<INSERT NETWORK NAME";
-const char WiFiPSK[] = "<INSERT PASSWORD>";
+// WiFi Definitions
+const char WiFiSSID[] = "";
+const char WiFiPSK[] = "";
 
-// Pin Definitions 
+// Pin Definitions
 const int COFFEE_PIN = 2; // pin to toggle LED on/off
 const int LED = 0; // LED that indicates status of coffee machine
 
-WiFiServer server(80);
+WiFiServer server(8323);
 
-void setup() 
+void setup()
 {
   initHardware();
   connectWiFi();
   server.begin();
 }
 
-void loop() 
+void loop()
 {
   // Check if a client has connected
   WiFiClient client = server.available();
@@ -35,50 +34,17 @@ void loop()
   client.flush();
 
   // Match the request
-  int val = -1; // We'll use 'val' to keep track of both the
-                // request type (read/set) and value if set.
-  if (req.indexOf("/coffee/1") != -1)
-    val = 1; // Will turn Coffee on
-  else if (req.indexOf("/coffee/0") != -1)
-    val = 0; // Will turn Coffee off
+  if (req.indexOf("/state/1") != -1)
+    on(client); // Will turn Coffee on
+  else if (req.indexOf("/state/0") != -1)
+    off(client); // Will turn Coffee off
   else if (req.indexOf("/read") != -1)
-    val = -2; // Will print coffee status
-  // Otherwise request will be invalid. We'll say as much in HTML
-
-  // Set GPIO0 according to the request
-  if (val >= 0)
-    digitalWrite(COFFEE_PIN, val);
-
-  client.flush();
-
-  // Prepare the response. Start with the common header:
-  String s = "HTTP/1.1 200 OK\r\n";
-  s += "Content-Type: text/html\r\n\r\n";
-  s += "<!DOCTYPE HTML>\r\n<html>\r\n";
-  // If we're setting the LED, print out a message saying we did
-  if (val >= 0)
-  {
-    s += "Coffee is now ";
-    s += (val)?"on":"off";
-  }
-  else if (val == -2)
-  { // If we're reading pins, print out those values:
-    int reading = digitalRead(LED);
-    s += (reading)?"on":"off";
-  }
-  else
-  {
-    s += "Invalid Request.<br> Try coffee/1, /coffee/0, or /read.";
-  }
-  s += "</html>\n";
-
-  // Send the response to the client
-  client.print(s);
-  delay(1);
-  Serial.println("Client disonnected");
-
-  // The client will actually be disconnected 
-  // when the function returns and 'client' object is detroyed
+    read(client); // Will print coffee status
+  else if (req.indexOf("/toggle") != -1)
+    toggle(client); // Will toggle coffee 
+  // Otherwise request will be invalid.
+  else help(client);
+  
 }
 
 void connectWiFi()
@@ -110,7 +76,7 @@ void connectWiFi()
     // Add delays -- allowing the processor to perform other
     // tasks -- wherever possible.
   }
-  Serial.println("WiFi connected");  
+  Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 }
@@ -121,7 +87,46 @@ void initHardware()
   Serial.begin(9600);
   pinMode(LED, INPUT_PULLUP);
   pinMode(COFFEE_PIN, OUTPUT);
-  digitalWrite(COFFEE_PIN, HIGH);
-  // Don't need to set ANALOG_PIN as input, 
-  // that's all it can be.
+  digitalWrite(COFFEE_PIN, LOW);
 }
+
+void off(WiFiClient client){
+  digitalWrite(COFFEE_PIN,0);
+  sendResponse(0, client);
+}
+void on(WiFiClient client){
+  digitalWrite(COFFEE_PIN,1);
+  sendResponse(1, client);
+}
+void toggle(WiFiClient client){
+  int reading = digitalRead(LED);
+  digitalWrite(COFFEE_PIN,!reading);
+  delay(500);
+  digitalWrite(COFFEE_PIN, reading);
+  sendResponse(reading, client);
+}
+void read(WiFiClient client){
+  int reading = digitalRead(LED);
+  sendResponse(reading, client);
+}
+
+//Send http response to client
+void sendResponse(int status, WiFiClient client){
+  client.flush();
+  String state = (status) ? "\"on\"" : "\"off\"";
+  
+  String s = "HTTP/1.1 200 OK\r\n";
+  s += "Content-Type: application/json\r\n\r\n";
+  s += "{\n";
+  s += "\t\"state\":" + state + "\n}";
+  
+  // Send the response to the client
+  client.print(s);
+}
+
+void help(WiFiClient client){
+  client.println("HTTP/1.1 400 Bad Request\r\n");
+  client.println("Content-Type: text/html\r\n\r\n");
+  client.println("Try with /read, /toggle, /state/0 or /state/1");
+}
+
